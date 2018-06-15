@@ -1,127 +1,91 @@
-(function() {
-  'use strict';
+"use strict";
+document.addEventListener('WebComponentsReady', function () {
+    
+    connectButton.addEventListener('click', function () {
+        progress.hidden = false;
+        
+        ButtonClick();
+    });
 
-  class PP {
-    constructor() {
-      this.device = null;
-      this.server = null;
-      this._characteristics = new Map();
-    }
-    connect() {
-      return navigator.bluetooth.requestDevice({filters:[{services:[ 'heart_rate' ]}]})
-      .then(device => {
-        this.device = device;
-        return device.gatt.connect();
-      })
-      .then(server => {
-        this.server = server;
-        return Promise.all([
-          server.getPrimaryService('heart_rate').then(service => {
-            return Promise.all([
-              this._cacheCharacteristic(service, 'body_sensor_location'),
-              this._cacheCharacteristic(service, 'heart_rate_measurement'),
-            ])
-          })
-        ]);
-      })
-    }
+    var bluetoothDevice;
+    var notifyCharacteristic;
+    var writeCharacteristic;
 
-    /* Heart Rate Service */
+    async function ButtonClick() {
+        try {
+            if (!bluetoothDevice) {
+                await requestDevice();
+            }
+            await connectDeviceAndCacheCharacteristics();
 
-    getBodySensorLocation() {
-      return this._readCharacteristicValue('body_sensor_location')
-      .then(data => {
-        let sensorLocation = data.getUint8(0);
-        switch (sensorLocation) {
-          case 0: return 'Other';
-          case 1: return 'Chest';
-          case 2: return 'Wrist';
-          case 3: return 'Finger';
-          case 4: return 'Hand';
-          case 5: return 'Ear Lobe';
-          case 6: return 'Foot';
-          default: return 'Unknown';
+        } catch (error) {
+            console.log('Argh! ' + error);
         }
-     });
     }
-    startNotificationsHeartRateMeasurement() {
-      return this._startNotifications('heart_rate_measurement');
+    async function requestDevice() {
+        $('#log').val('Requesting any Bluetooth Device...');
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+            // filters: [...] <- Prefer filters to save energy & show relevant devices.
+            acceptAllDevices: true,
+            optionalServices: ['00001000-0000-1000-8000-00805f9b34fb']
+        });
+        bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
     }
-    stopNotificationsHeartRateMeasurement() {
-      return this._stopNotifications('heart_rate_measurement');
-    }
-    parseHeartRate(value) {
-      // In Chrome 50+, a DataView is returned instead of an ArrayBuffer.
-      value = value.buffer ? value : new DataView(value);
-      let flags = value.getUint8(0);
-      let rate16Bits = flags & 0x1;
-      let result = {};
-      let index = 1;
-      if (rate16Bits) {
-        result.heartRate = value.getUint16(index, /*littleEndian=*/true);
-        index += 2;
-      } else {
-        result.heartRate = value.getUint8(index);
-        index += 1;
-      }
-      let contactDetected = flags & 0x2;
-      let contactSensorPresent = flags & 0x4;
-      if (contactSensorPresent) {
-        result.contactDetected = !!contactDetected;
-      }
-      let energyPresent = flags & 0x8;
-      if (energyPresent) {
-        result.energyExpended = value.getUint16(index, /*littleEndian=*/true);
-        index += 2;
-      }
-      let rrIntervalPresent = flags & 0x10;
-      if (rrIntervalPresent) {
-        let rrIntervals = [];
-        for (; index + 1 < value.byteLength; index += 2) {
-          rrIntervals.push(value.getUint16(index, /*littleEndian=*/true));
+
+    async function connectDeviceAndCacheCharacteristics() {
+        if (bluetoothDevice.gatt.connected && notifyCharacteristic) {
+            return;
         }
-        result.rrIntervals = rrIntervals;
-      }
-      return result;
+        progress.hidden = false;
+        $('#log').val('Connecting to GATT Server...');
+        const server = await bluetoothDevice.gatt.connect();
+        $('#status').val('Connected');
+
+        $('#log').val('Getting Primary Service...');
+        const service = await server.getPrimaryService('00001000-0000-1000-8000-00805f9b34fb');
+
+        $('#log').val('Getting Characteristic...');
+        notifyCharacteristic = await service.getCharacteristic('00001002-0000-1000-8000-00805f9b34fb');
+        
+        //writeCharacteristic = await service.getCharacteristic('00001001-0000-1000-8000-00805f9b34fb');
+        //let writedata = Uint32Array.from([0xAA,0x55,0x01,0xCC]);
+        //writeCharacteristic.writeValue(writedata);
+        
+        notifyCharacteristic.addEventListener('characteristicvaluechanged',
+            handleLevelChanged);
+        
+        progress.hidden = false;
+        await onStartNotificationsButtonClick();
     }
 
-    /* Utils */
+    /* This function will be called when `readValue` resolves and
+    * characteristic value changes since `characteristicvaluechanged` event
+    * listener has been added. */
+    function handleLevelChanged(event) {
+        let Level = new Uint8Array(event.target.value);
+        $('#notifier').val('> Info is ' + event.target.value.getUint8(0)+' '+event.target.value.getUint8(1)+' '+event.target.value.getUint8(2)+' '+event.target.value.getUint8(3) );
+    }
 
-    _cacheCharacteristic(service, characteristicUuid) {
-      return service.getCharacteristic(characteristicUuid)
-      .then(characteristic => {
-        this._characteristics.set(characteristicUuid, characteristic);
-      });
-    }
-    _readCharacteristicValue(characteristicUuid) {
-      let characteristic = this._characteristics.get(characteristicUuid);
-      return characteristic.readValue()
-      .then(value => {
-        // In Chrome 50+, a DataView is returned instead of an ArrayBuffer.
-        value = value.buffer ? value : new DataView(value);
-        return value;
-      });
-    }
-    _writeCharacteristicValue(characteristicUuid, value) {
-      let characteristic = this._characteristics.get(characteristicUuid);
-      return characteristic.writeValue(value);
-    }
-    _startNotifications(characteristicUuid) {
-      let characteristic = this._characteristics.get(characteristicUuid);
-      // Returns characteristic to set up characteristicvaluechanged event
-      // handlers in the resolved promise.
-      return characteristic.startNotifications()
-      .then(() => characteristic);
-    }
-    _stopNotifications(characteristicUuid) {
-      let characteristic = this._characteristics.get(characteristicUuid);
-      // Returns characteristic to remove characteristicvaluechanged event
-      // handlers in the resolved promise.
-      return characteristic.stopNotifications()
-      .then(() => characteristic);
-    }
-  }
+    async function onStartNotificationsButtonClick() {
+        try {
+            $('#log').val('Starting Notifications...');
+            await notifyCharacteristic.startNotifications();
 
-  window.pp = new PP();
+            $('#log').val('> Notifications started');
+            
+        } catch (error) {
+            $('#log').val('Argh! ' + error);
+        }
+    }
 
-})();
+    async function onDisconnected() {
+        $('#status').val('Bluetooth Device disconnected');
+        $('#notifier').val('');
+        try {
+            await connectDeviceAndCacheCharacteristics()
+        } catch (error) {
+            $('#log').val('Argh! ' + error);
+        }
+    }
+
+});

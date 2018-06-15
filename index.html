@@ -25,7 +25,8 @@ limitations under the License.
 
 
     <script src="bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-
+    <script src="pp.js"></script>
+    <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
     <!-- Polymer components -->
     <link rel="import" href="bower_components/paper-button/paper-button.html">
     <link rel="import" href="bower_components/paper-card/paper-card.html">
@@ -104,15 +105,14 @@ limitations under the License.
         <paper-card>
             <div class="card-content">
                 <paper-button id="connectButton" raised class="colorful">Connect</paper-button>
-                <paper-button id="startNotifications" raised class="colorful">Start Notify</paper-button>
-                <paper-button id="stopNotifications" raised class="colorful">Stop  Notify</paper-button>
             </div>
         </paper-card>
 
         <paper-card>
             <div class="card-content">
-                <paper-input id="nameInput" label="Device Name" disabled></paper-input>
-                <paper-button id="writeNameButton" class="colorful" disabled>Update Name</paper-button>
+                <paper-input id="status" label="Status" disabled></paper-input>
+                <paper-input id="notifier" label="Notification" disabled></paper-input>
+                <paper-input id="log" label="log" disabled></paper-input>
             </div>
         </paper-card>
 
@@ -126,142 +126,6 @@ limitations under the License.
         </paper-dialog>
     </div>
 
-    <script>
-        "use strict";
-        document.addEventListener('WebComponentsReady', function () {
-            function logProgress(x) {
-                console.log("Progress:", x);
-                return x;
-            }
-            function handleError(error) {
-                console.log(error);
-                if (error.toString().match(/User cancelled/))
-                    return;  // User didn't make a choice, no error needed.
-                else
-                    dialogError.innerText = error;
-                errorDialog.open();
-            }
-            function disableInput() {
-                nameInput.disabled = true;
-                nameInput.charCounter = false;
-                writeNameButton.disabled = true;
-            }
-            function enableInput() {
-                nameInput.disabled = false;
-                nameInput.charCounter = true;
-                writeNameButton.disabled = false;
-            }
-            function anyDeviceFilter() {
-                // This is the closest we can get for now to get all devices.
-                // https://github.com/WebBluetoothCG/web-bluetooth/issues/234
-                return Array.from('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
-                    .map(c => ({ namePrefix: c }))
-                    .concat({ name: '' });
-            }
-            connectButton.addEventListener('click', function () {
-                progress.hidden = false;
-                disableInput();
-                ButtonClick();
-            });
-            
-            var bluetoothDevice;
-            var notifyCharacteristic;
-            var writeCharacteristic;
-
-            async function ButtonClick() {
-                try {
-                    if (!bluetoothDevice) {
-                        await requestDevice();
-                    }
-                    await connectDeviceAndCacheCharacteristics();
-
-                    //log('Reading Battery Level...');
-                    //await batteryLevelCharacteristic.readValue();
-                } catch (error) {
-                    console.log('Argh! ' + error);
-                }
-            }
-            async function requestDevice() {
-                console.log('Requesting any Bluetooth Device...');
-                bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    // filters: [...] <- Prefer filters to save energy & show relevant devices.
-                    acceptAllDevices: true,
-                    optionalServices: ['00001000-0000-1000-8000-00805f9b34fb']
-                });
-                bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-            }
-
-            async function connectDeviceAndCacheCharacteristics() {
-                if (bluetoothDevice.gatt.connected && notifyCharacteristic) {
-                    return;
-                }
-                progress.hidden = false;
-                console.log('Connecting to GATT Server...');
-                const server = await bluetoothDevice.gatt.connect();
-
-                console.log('Getting Primary Service...');
-                const service = await server.getPrimaryService('00001000-0000-1000-8000-00805f9b34fb');
-
-                console.log('Getting Characteristic...');
-                notifyCharacteristic = await service.getCharacteristic('00001002-0000-1000-8000-00805f9b34fb');
-                
-                writeCharacteristic = await service.getCharacteristic('00001001-0000-1000-8000-00805f9b34fb');
-                let writedata = Uint32Array.from([0xAA,0x55,0x01,0xCC]);
-                writeCharacteristic.writeValue(writedata);
-                
-                notifyCharacteristic.addEventListener('characteristicvaluechanged',
-                    handleLevelChanged);
-                
-                progress.hidden = false;
-                await onStartNotificationsButtonClick();
-                document.querySelector('#startNotifications').disabled = false;
-                document.querySelector('#stopNotifications').disabled = true;
-            }
-
-            /* This function will be called when `readValue` resolves and
-            * characteristic value changes since `characteristicvaluechanged` event
-            * listener has been added. */
-            function handleLevelChanged(event) {
-                let Level = new Uint8Array(event.target.value);
-                console.log('> Info is ' + event.target.value.getUint8(0)+' '+event.target.value.getUint8(1)+' '+event.target.value.getUint8(2)+' '+event.target.value.getUint8(3) );
-            }
-
-            async function onStartNotificationsButtonClick() {
-                try {
-                    console.log('Starting Notifications...');
-                    await notifyCharacteristic.startNotifications();
-
-                    console.log('> Notifications started');
-                    document.querySelector('#startNotifications').disabled = true;
-                    document.querySelector('#stopNotifications').disabled = false;
-                } catch (error) {
-                    console.log('Argh! ' + error);
-                }
-            }
-
-            async function onStopNotificationsButtonClick() {
-                try {
-                    console.log('Stopping  Notifications...');
-                    await notifyCharacteristic.stopNotifications();
-
-                    console.log('> Notifications stopped');
-                    document.querySelector('#startNotifications').disabled = false;
-                    document.querySelector('#stopNotifications').disabled = true;
-                } catch (error) {
-                    log('Argh! ' + error);
-                }
-            }
-            async function onDisconnected() {
-                console.log('> Bluetooth Device disconnected');
-                try {
-                    await connectDeviceAndCacheCharacteristics()
-                } catch (error) {
-                    console.log('Argh! ' + error);
-                }
-            }
-
-        });
-    </script>
 </body>
 
 </html>
